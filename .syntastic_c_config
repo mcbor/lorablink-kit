@@ -1,0 +1,8 @@
+-Ienzo
+-Istm32
+-Istm32/CMSIS/Include
+-std=c99
+-DSTM32L1XX_MD
+-DCFG_xrange_board
+-DCFG_sx1272_radio
+-DCFG_enzo_clib

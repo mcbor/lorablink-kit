@@ -1,0 +1,119 @@
+# SELECT TOOLCHAIN GNU/IAR/KEIL
+TOOLCHAIN = gnu
+
+# EDIT CONFIGURATIONS BELOW TO REFLECT COMPILER INSTALL DIR AND CMSIS INCLUDE DIR 
+
+# GNU TOOLCHAIN
+ifeq (${TOOLCHAIN}, gnu)
+GNU       = arm-none-eabi-
+CC        = ${GNU}gcc
+AS        = ${GNU}as
+LN        = ${GNU}gcc
+OBJCOPY   = ${GNU}objcopy
+SIZE      = ${GNU}size
+GDB       = ${GNU}gdb
+DFU       = dfu-util
+DFUSUFFIX = dfu-suffix
+OOCD      = openocd
+STFLASH   = st-flash
+
+CMSIS_INC = ../../stm32/CMSIS/Include
+define CMSIS_MSG
+ERROR: CMSIS Library missing: $(CMSIS_INC)
+## CMSIS: Cortex Microcontroller Software Interface Standard
+## CMSIS Library can be obtained from the STM32L1xx standard peripherals library
+## Download URL: www.st.com/web/catalog/tools/FM147/CL1794/SC961/SS1743/PF257913
+endef
+ifeq (,$(wildcard $(CMSIS_INC)))
+$(error $(CMSIS_MSG))
+endif
+
+LINKER_SCRIPT =  ../../stm32/linker/STM32L151XC_FLASH.ld
+define LNK_SCRIPT_MSG
+ERROR: Linker Script missing: $(LINKER_SCRIPT)
+## Linker Script can be obtained from the STM32L1xx standard peripherals library
+## Download URL: www.st.com/web/catalog/tools/FM147/CL1794/SC961/SS1743/PF257913
+endef
+ifeq (,$(wildcard $(LINKER_SCRIPT)))
+$(error $(LNK_SCRIPT_MSG))
+endif
+
+INC = $(CMSIS_INC)
+
+CPU    = -mcpu=cortex-m3 -mthumb
+CCOPTS = $(CPU) -c -std=gnu99
+CCOPTS += -fno-common -fmessage-length=0 -fno-builtin -fno-exceptions -ffunction-sections -fdata-sections -fomit-frame-pointer -MMD -MP
+CCOPTS += -g -Wall -Wno-main
+ASOPTS = $(CPU)
+LNOPTS = $(CPU) -Wl,--gc-sections -T$(LINKER_SCRIPT)
+endif
+
+# ENZO CONFIG
+ENZOCFG += -DSTM32L1XX_MD -DCFG_DEBUG -DCFG_eu868 -DCFG_xrange_board -DCFG_sx1272_radio -DCFG_enzo_clib -DHSE_VALUE=16000000
+
+ENZODIR  = ../../enzo
+HALDIR   = ../../stm32
+BUILDDIR = build
+
+TARGET = $(notdir ${CURDIR})
+
+# RULES
+SRCS = $(notdir $(wildcard ${ENZODIR}/*.c ${HALDIR}/*.c ${HALDIR}/*_${TOOLCHAIN}.s *.c))
+OBJS = $(patsubst %, ${BUILDDIR}/%.o, $(basename ${SRCS}))
+
+VPATH = ${ENZODIR} ${HALDIR} .
+
+${BUILDDIR}/%.o: %.c | ${BUILDDIR}
+	${CC} ${CCOPTS} ${ENZOCFG} -I${INC} -I${ENZODIR} -I${HALDIR} $< -o$@
+
+${BUILDDIR}/%.o: %.s | ${BUILDDIR}
+	${AS} ${ASOPTS} -I${INC} $< -o $@
+
+${BUILDDIR}/%.elf: ${OBJS}
+	${LN} ${LNOPTS} -o $@ $^
+
+${BUILDDIR}/%.hex: ${BUILDDIR}/%.elf
+	${OBJCOPY} -O ihex $< $@
+
+${BUILDDIR}/%.bin: ${BUILDDIR}/%.elf
+	${OBJCOPY} -O binary $< $@
+
+${BUILDDIR}/%.dfu: ${BUILDDIR}/%.bin
+	@cp $< $@
+	${DFUSUFFIX} -v 0483 -p df11 -a $@
+
+all: ${BUILDDIR}/$(notdir ${CURDIR}).hex
+
+clean:
+	rm -rf ${BUILDDIR}
+
+size: ${BUILDDIR}/${TARGET}.elf
+	${SIZE} --format=berkely $<
+
+${BUILDDIR}:
+	mkdir $@
+
+flash-dfu: ${BUILDDIR}/${TARGET}.dfu
+	@echo Flash using dfu
+	${DFU} -d 0483:df11 -a 0 -s 0x08000000:leave -D $<
+
+flash-ocd: ${BUILDDIR}/${TARGET}.hex
+	@echo Flash using OpenOCD
+	${OOCD} -f ${HALDIR}/xrange.cfg \
+				  -c "init" -c "reset init" \
+					-c "flash write_image erase $<" \
+					-c "reset" \
+					-c "shutdown"
+
+flash-st: $(BUILDDIR)/${TARGET}.bin
+	@echo Flash using st-flash
+	${STFLASH} write $< 0x8000000
+
+flash-erase:
+	${STFLASH} erase
+
+.PHONY: all clean size flash-dfu flash-ocd flash-st flash-erase
+
+.SECONDARY:
+
+# vim:set ft=make sw=2 ts=2:
